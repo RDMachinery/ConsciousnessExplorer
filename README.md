@@ -4,6 +4,8 @@ A Java Swing application that visualises Igor Aleksander's **Five Axioms of Synt
 
 ---
 
+![Screenshot](./screenshot.jpeg)
+
 ## Background
 
 [Igor Aleksander](https://en.wikipedia.org/wiki/Igor_Aleksander) (1937–2024) was Professor of Neural Systems Engineering at Imperial College London. Over several decades he developed a coherent theory of machine consciousness grounded in neural state machines, most fully realised in his **Magnus** architecture and articulated in works including *Impossible Minds* (1996) and *My Neurons, My Consciousness* (2021).
