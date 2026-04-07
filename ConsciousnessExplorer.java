@@ -7,8 +7,7 @@ import java.awt.image.BufferedImage;
 import java.util.*;
 import java.util.List;
 import java.util.stream.*;
-import java.util.Timer;
-import java.util.TimerTask;
+
 
 // ============================================================
 // GEOMETRIC WORLD
@@ -61,7 +60,8 @@ class GeometricShape {
             case MAGENTA -> new Color(200, 60,  200);
             case WHITE   -> new Color(220, 220, 220);
         };
-        return new Color(base.getRed(), base.getGreen(), base.getBlue(), (int)(alpha * 255));
+        int a = Math.max(0, Math.min(255, (int)(alpha * 255)));
+        return new Color(base.getRed(), base.getGreen(), base.getBlue(), a);
     }
 }
 
@@ -181,7 +181,7 @@ class ConsciousnessEngine {
 
 class WorldPanel extends JPanel {
     public GeometricWorld world;
-    public ConsciousnessEngine engine; // Made public for hysterical reasons
+    public ConsciousnessEngine engine;
     private int attended = -1;
     private float pulse = 0;
 
@@ -224,6 +224,30 @@ class WorldPanel extends JPanel {
         double[] weights = engine.getFocusWeights();
         List<GeometricShape> shapes = world.shapes;
 
+        // draw attended halo FIRST (behind the shape)
+        if (attended >= 0 && attended < shapes.size()) {
+            GeometricShape sh = shapes.get(attended);
+            int cx = (int)(sh.x * W);
+            int cy = (int)(sh.y * H);
+            int r  = (int)(sh.size * Math.min(W, H) * 0.5);
+            // pulse is -1..+1; map radius offset to 4..16 (always positive)
+            int haloR = r + 10 + (int)((pulse + 1.0f) * 0.5f * 12);
+            // alpha oscillates between 60 and 160
+            int haloAlpha = 60 + (int)((pulse + 1.0f) * 0.5f * 100);
+            // outer glow fill
+            g2.setColor(new Color(255, 200, 40, haloAlpha / 4));
+            g2.fillOval(cx - haloR, cy - haloR, haloR * 2, haloR * 2);
+            // bright ring
+            g2.setColor(new Color(255, 200, 40, haloAlpha));
+            g2.setStroke(new BasicStroke(3.0f));
+            g2.drawOval(cx - haloR, cy - haloR, haloR * 2, haloR * 2);
+            // second subtler outer ring
+            int haloR2 = haloR + 10;
+            g2.setColor(new Color(255, 200, 40, haloAlpha / 3));
+            g2.setStroke(new BasicStroke(1.5f));
+            g2.drawOval(cx - haloR2, cy - haloR2, haloR2 * 2, haloR2 * 2);
+        }
+
         // draw shapes — non-attended shapes dimmed
         for (int i = 0; i < shapes.size(); i++) {
             GeometricShape sh = shapes.get(i);
@@ -231,6 +255,7 @@ class WorldPanel extends JPanel {
             float alpha = isAttended ? 1.0f : 0.25f;
             if (weights != null && weights.length > i)
                 alpha = Math.max(0.12f, (float) weights[i] * 1.4f);
+            if (isAttended) alpha = 1.0f;  // always full brightness for attended
 
             int cx = (int)(sh.x * W);
             int cy = (int)(sh.y * H);
@@ -239,20 +264,13 @@ class WorldPanel extends JPanel {
             drawShape(g2, sh, cx, cy, r, alpha, isAttended);
         }
 
-        // attended shape: pulsing halo
+        // ATTENDED label drawn on top of everything
         if (attended >= 0 && attended < shapes.size()) {
             GeometricShape sh = shapes.get(attended);
             int cx = (int)(sh.x * W);
             int cy = (int)(sh.y * H);
             int r  = (int)(sh.size * Math.min(W, H) * 0.5);
-            int haloR = r + 12 + (int)(pulse * 10);
-            g2.setColor(new Color(255, 230, 80, 60 + (int)(pulse * 60)));
-            g2.setStroke(new BasicStroke(2.5f));
-            g2.drawOval(cx - haloR, cy - haloR, haloR * 2, haloR * 2);
-            g2.setColor(new Color(255, 230, 80, 25));
-            g2.fillOval(cx - haloR, cy - haloR, haloR * 2, haloR * 2);
-
-            // label
+            int haloR = r + 12 + (int)(pulse * 6);
             g2.setFont(new Font("Monospaced", Font.BOLD, 11));
             g2.setColor(ATTENDED);
             g2.drawString("ATTENDED", cx - 28, cy - haloR - 6);
@@ -418,7 +436,7 @@ public class ConsciousnessExplorer extends JFrame {
     private LogPanel logPanel;
     private MoodBar moodBar;
     private JLabel moodLabel, cycleLabel, attendLabel;
-    private Timer timer;
+    private javax.swing.Timer timer;
     private int cycle = 0;
     private float pulse = 0;
     private boolean running = false;
@@ -565,26 +583,25 @@ public class ConsciousnessExplorer extends JFrame {
 
         setContentPane(root);
 
-        // animation timer (world movement + pulse)
-        timer = new Timer();
-        timer.scheduleAtFixedRate(new TimerTask() {
-            @Override public void run() {
-                if (running) step();
-                // pulse animation
-                pulse = (pulse + 0.08f) % 1.0f;
-                worldPanel.setPulse((float)Math.sin(pulse * Math.PI));
-                worldPanel.repaint();
-            }
-        }, 0, 80);
+        // animation timer — javax.swing.Timer fires on the EDT, no threading conflicts
+        timer = new javax.swing.Timer(80, e -> {
+            // always move shapes every tick so they drift continuously
+            world.step();
+            // advance pulse angle through full 2π cycle
+            pulse = (pulse + 0.15f) % (2.0f * (float)Math.PI);
+            worldPanel.setPulse((float)Math.sin(pulse));
+            // run consciousness step if active
+            if (running) step();
+            worldPanel.repaint();
+        });
+        timer.start();
     }
 
     private void step() {
-        world.step();
         double[] sensor = world.getSensorData();
         int att = engine.update(sensor, world.shapes.size());
         cycle++;
 
-        // mark attended on shapes
         for (int i = 0; i < world.shapes.size(); i++)
             world.shapes.get(i).isTarget = (i == att);
 
@@ -592,15 +609,13 @@ public class ConsciousnessExplorer extends JFrame {
         saliencePanel.update(engine.getFocusWeights(), att, world.shapes);
 
         String attShape = att >= 0 ? world.shapes.get(att).type.name() + " (" + world.shapes.get(att).color.name() + ")" : "—";
-        SwingUtilities.invokeLater(() -> {
-            cycleLabel .setText("CYCLE:  " + cycle);
-            attendLabel.setText("ATTENDED:  " + attShape);
-            moodLabel  .setText(String.format("MOOD:  %.3f", engine.getMood()));
-            moodBar.setMood(engine.getMood());
-            moodBar.repaint();
-            logPanel.append(engine.getLog());
-            saliencePanel.repaint();
-        });
+        cycleLabel .setText("CYCLE:  " + cycle);
+        attendLabel.setText("ATTENDED:  " + attShape);
+        moodLabel  .setText(String.format("MOOD:  %.3f", engine.getMood()));
+        moodBar.setMood(engine.getMood());
+        moodBar.repaint();
+        logPanel.append(engine.getLog());
+        saliencePanel.repaint();
     }
 
     private void reset() {
@@ -611,13 +626,11 @@ public class ConsciousnessExplorer extends JFrame {
         worldPanel.world  = world;
         worldPanel.engine = engine;
         worldPanel.setAttended(-1);
-        SwingUtilities.invokeLater(() -> {
-            cycleLabel .setText("CYCLE:  0");
-            attendLabel.setText("ATTENDED:  —");
-            moodLabel  .setText("MOOD:  0.000");
-            moodBar.setMood(0);
-            moodBar.repaint();
-        });
+        cycleLabel .setText("CYCLE:  0");
+        attendLabel.setText("ATTENDED:  —");
+        moodLabel  .setText("MOOD:  0.000");
+        moodBar.setMood(0);
+        moodBar.repaint();
     }
 
     private void toggleRun(JButton btn) {
